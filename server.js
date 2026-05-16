@@ -6,8 +6,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const APP_ID = process.env.EBAY_CLIENT_ID;
-
 const GOLF_SEARCHES = [
   'TaylorMade driver',
   'Scotty Cameron putter',
@@ -16,9 +14,7 @@ const GOLF_SEARCHES = [
   'Callaway irons',
   'Mizuno irons',
   'Ventus shaft',
-  'Fujikura shaft',
   'golf waterproof jacket',
-  'golf quarter zip',
 ];
 
 const RESALE_MAP = {
@@ -44,7 +40,6 @@ function estimateResale(title, price) {
 
 function detectAIFlag(title) {
   const checks = [
-    ['taylormade', 'TaylorMade'],
     ['calloway', 'Callaway'],
     ['titlest', 'Titleist'],
     ['drver', 'driver'],
@@ -52,7 +47,6 @@ function detectAIFlag(title) {
     ['stif ', 'stiff'],
     ['irns', 'irons'],
     ['scotty camron', 'Scotty Cameron'],
-    ['scotty cemeron', 'Scotty Cameron'],
   ];
   const lower = title.toLowerCase();
   for (const [wrong, correct] of checks) {
@@ -80,96 +74,113 @@ function getCategory(title) {
   if (t.includes('putter') || t.includes('puter')) return 'Putters';
   if (t.includes('shaft')) return 'Premium Shafts';
   if (t.includes('jacket') || t.includes('waterproof')) return 'Golf Jackets';
-  if (t.includes('zip') || t.includes('fleece') || t.includes('pullover')) return 'Quarter Zips';
+  if (t.includes('zip') || t.includes('fleece')) return 'Quarter Zips';
   if (t.includes('utility') || t.includes('hybrid')) return 'Utility Irons';
   return 'Other';
+}
+
+async function scrapeEbaySearch(query) {
+  const encoded = encodeURIComponent(query);
+  const url = `https://www.ebay.co.uk/sch/i.html?_nkw=${encoded}&_sop=10&LH_BIN=1&_ipg=60`;
+  
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+      'Accept-Language': 'en-GB,en;q=0.9',
+    }
+  });
+  const html = await res.text();
+  
+  const items = [];
+  const itemRegex = /<li class="s-item[^"]*"[^>]*>([\s\S]*?)<\/li>/g;
+  let match;
+  
+  while ((match = itemRegex.exec(html)) !== null) {
+    const block = match[1];
+    
+    const titleMatch = block.match(/<span[^>]*role="heading"[^>]*>([^<]+)<\/span>/) 
+                    || block.match(/<div class="s-item__title"[^>]*>(?:<span[^>]*>)?([^<]+)/);
+    const priceMatch = block.match(/<span class="s-item__price"[^>]*>(?:<span[^>]*>)?£([\d,]+\.\d{2})/);
+    const urlMatch = block.match(/<a class="s-item__link"[^>]*href="([^"]+)"/);
+    const imgMatch = block.match(/<img[^>]*src="([^"]+)"[^>]*class="s-item__image-img/) 
+                  || block.match(/<img[^>]*class="s-item__image-img"[^>]*src="([^"]+)"/);
+    const condMatch = block.match(/<span class="SECONDARY_INFO"[^>]*>([^<]+)<\/span>/);
+    const itemIdMatch = urlMatch ? urlMatch[1].match(/\/itm\/(?:[^\/]+\/)?(\d+)/) : null;
+    
+    if (!titleMatch || !priceMatch || !urlMatch || !itemIdMatch) continue;
+    
+    const title = titleMatch[1].trim();
+    if (title.toLowerCase().includes('shop on ebay')) continue;
+    
+    const price = parseFloat(priceMatch[1].replace(/,/g, ''));
+    if (price < 5 || price > 1500) continue;
+    
+    items.push({
+      itemId: itemIdMatch[1],
+      title,
+      price,
+      url: urlMatch[1].split('?')[0],
+      image: imgMatch ? imgMatch[1] : null,
+      condition: condMatch ? condMatch[1].trim() : 'Used',
+    });
+  }
+  
+  return items;
 }
 
 app.get('/api/listings', async (req, res) => {
   try {
     const allItems = [];
     const seen = new Set();
-
+    
     for (const query of GOLF_SEARCHES) {
-      const params = new URLSearchParams({
-        'OPERATION-NAME': 'findItemsAdvanced',
-        'SERVICE-VERSION': '1.13.0',
-        'SECURITY-APPNAME': APP_ID,
-        'RESPONSE-DATA-FORMAT': 'JSON',
-        'REST-PAYLOAD': '',
-        'keywords': query,
-        'categoryId': '1513',
-        'itemFilter(0).name': 'ListingType',
-        'itemFilter(0).value': 'FixedPrice',
-        'itemFilter(1).name': 'Condition',
-        'itemFilter(1).value(0)': '3000',
-        'itemFilter(1).value(1)': '2500',
-        'itemFilter(1).value(2)': '2000',
-        'itemFilter(1).value(3)': '1000',
-        'itemFilter(2).name': 'LocatedIn',
-        'itemFilter(2).value': 'GB',
-        'itemFilter(3).name': 'Currency',
-        'itemFilter(3).value': 'GBP',
-        'sortOrder': 'StartTimeNewest',
-        'paginationInput.entriesPerPage': '20',
-      });
-
-      const url = `https://svcs.ebay.com/services/search/FindingService/v1?${params}`;
-      const r = await fetch(url);
-      const data = await r.json();
-
-      const items = data?.findItemsAdvancedResponse?.[0]?.searchResult?.[0]?.item || [];
-
-      for (const item of items) {
-        const itemId = item.itemId?.[0];
-        if (!itemId || seen.has(itemId)) continue;
-        seen.add(itemId);
-
-        const title = item.title?.[0] || '';
-        const priceStr = item.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'];
-        const price = parseFloat(priceStr || '0');
-        if (price < 10 || price > 800) continue;
-
-        const viewUrl = item.viewItemURL?.[0] || '';
-        const imageUrl = item.galleryURL?.[0] || null;
-        const condition = item.condition?.[0]?.conditionDisplayName?.[0] || 'Used';
-        const sellerFeedback = item.sellerInfo?.[0]?.positiveFeedbackPercent?.[0] || null;
-        const shippingCost = parseFloat(item.shippingInfo?.[0]?.shippingServiceCost?.[0]?.['__value__'] || '7');
-
-        const resale = estimateResale(title, price);
-        const fees = Math.round(resale * 0.1);
-        const shipping = shippingCost > 0 ? Math.round(shippingCost) : 7;
-        const profit = resale - price - fees - shipping;
-        const roi = Math.round((profit / price) * 100);
-
-        if (roi < 20) continue;
-
-        allItems.push({
-          id: itemId,
-          title,
-          price: Math.round(price),
-          resale,
-          fees,
-          shipping,
-          profit: Math.round(profit),
-          roi,
-          badge: getBadge(roi),
-          hot: roi >= 40,
-          ai_flag: detectAIFlag(title),
-          marketplace: 'eBay',
-          url: viewUrl,
-          image_url: imageUrl,
-          condition,
-          seller_rating: sellerFeedback,
-          category: getCategory(title),
-          time: 0,
-        });
+      try {
+        console.log('Scraping:', query);
+        const items = await scrapeEbaySearch(query);
+        console.log(`  Found ${items.length} items`);
+        
+        for (const item of items) {
+          if (seen.has(item.itemId)) continue;
+          seen.add(item.itemId);
+          
+          const resale = estimateResale(item.title, item.price);
+          const fees = Math.round(resale * 0.1);
+          const shipping = 7;
+          const profit = resale - item.price - fees - shipping;
+          const roi = Math.round((profit / item.price) * 100);
+          
+          if (roi < 15) continue;
+          
+          allItems.push({
+            id: item.itemId,
+            title: item.title,
+            price: Math.round(item.price),
+            resale,
+            fees,
+            shipping,
+            profit: Math.round(profit),
+            roi,
+            badge: getBadge(roi),
+            hot: roi >= 40,
+            ai_flag: detectAIFlag(item.title),
+            marketplace: 'eBay',
+            url: item.url,
+            image_url: item.image,
+            condition: item.condition,
+            seller_rating: null,
+            category: getCategory(item.title),
+            time: 0,
+          });
+        }
+      } catch (err) {
+        console.error(`Error scraping "${query}":`, err.message);
       }
     }
-
+    
     allItems.sort((a, b) => b.roi - a.roi);
-    res.json({ success: true, listings: allItems });
-
+    console.log(`Returning ${allItems.length} total listings`);
+    res.json({ success: true, listings: allItems.slice(0, 60) });
+    
   } catch (err) {
     console.error('Error:', err);
     res.status(500).json({ success: false, error: err.message });
