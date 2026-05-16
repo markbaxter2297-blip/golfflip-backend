@@ -77,7 +77,7 @@ app.get('/api/listings', async (req, res) => {
     const seen = new Set();
     
     for (const q of SEARCHES) {
-      const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&limit=20&filter=buyingOptions:{FIXED_PRICE}`;
+      const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&limit=20&filter=buyingOptions:{FIXED_PRICE}&sort=newlyListed`;
       const r = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}`, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB' }
       });
@@ -101,6 +101,7 @@ app.get('/api/listings', async (req, res) => {
         items.push({
           id: it.itemId,
           title: it.title,
+          listed_at: it.itemCreationDate || null,
           price: Math.round(price),
           resale, fees, shipping,
           profit: Math.round(profit),
