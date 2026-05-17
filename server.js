@@ -67,13 +67,11 @@ const CLOTHING_SEARCHES = [
 
 const ALL_SEARCHES = [...CLUB_SEARCHES, ...SHAFT_SEARCHES, ...CLOTHING_SEARCHES];
 
-// Keywords that indicate left handed — filter these OUT for clubs
 const LEFT_HAND_KEYWORDS = [
   'left hand','left-hand','lh ','lh)','(lh','left handed','left-handed',
-  ' lhf ',' lh ',' lhg ','lhc','for lefty','lefty','left hand only',
+  ' lhf ',' lh ',' lhg ','lhc','for lefty','lefty',
 ];
 
-// Keywords that indicate non-UK location
 const EXCLUDE_LOCATION_KEYWORDS = [
   'ships from usa','ships from us','ships from japan','ships from korea',
   'ships from australia','international shipping only',
@@ -81,8 +79,7 @@ const EXCLUDE_LOCATION_KEYWORDS = [
 
 function isLeftHanded(title) {
   const t = title.toLowerCase();
-  // Only apply left hand filter to clubs, not shafts or clothing
-  const isClub = t.includes('driver') || t.includes('iron') || t.includes('putter') || 
+  const isClub = t.includes('driver') || t.includes('iron') || t.includes('putter') ||
                  t.includes('wood') || t.includes('hybrid') || t.includes('utility');
   if (!isClub) return false;
   return LEFT_HAND_KEYWORDS.some(kw => t.includes(kw));
@@ -140,6 +137,12 @@ function getCategory(title) {
   return 'Other';
 }
 
+function getSoldUrl(title) {
+  // Take first 5 words of title for a clean search
+  const cleanTitle = title.split(' ').slice(0, 5).join(' ');
+  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(cleanTitle)}&LH_Sold=1&LH_Complete=1&LH_ItemCondition=3000&_ipg=20&_sop=13`;
+}
+
 app.get('/api/listings', async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -148,10 +151,8 @@ app.get('/api/listings', async (req, res) => {
 
     for (const q of ALL_SEARCHES) {
       try {
-        // itemLocationCountry=GB ensures UK listings only
-        // We also add conditions filter to exclude new defective/parts
         const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&limit=20&filter=buyingOptions:{FIXED_PRICE},itemLocationCountry:GB,conditions:{USED|VERY_GOOD|GOOD|LIKE_NEW|NEW}&sort=newlyListed`;
-        
+
         const r = await fetch(url, {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -170,13 +171,9 @@ app.get('/api/listings', async (req, res) => {
           if (price < 10 || price > 1200) continue;
           if (it.price?.currency !== 'GBP') continue;
 
-          // Skip left handed clubs
           if (isLeftHanded(it.title)) continue;
-
-          // Skip non-UK titles
           if (isExcludedLocation(it.title)) continue;
 
-          // Double check location from API data
           const itemLocation = it.itemLocation?.country || '';
           if (itemLocation && itemLocation !== 'GB') continue;
 
@@ -190,6 +187,7 @@ app.get('/api/listings', async (req, res) => {
           items.push({
             id: it.itemId,
             title: it.title,
+            sold_url: getSoldUrl(it.title),
             listed_at: it.itemCreationDate || null,
             price: Math.round(price),
             resale, fees, shipping,
