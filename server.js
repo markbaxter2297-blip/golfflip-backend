@@ -27,47 +27,18 @@ async function getAccessToken() {
 }
 
 const SEARCHES = [
-  'taylormade driver right hand',
-  'ping driver right hand',
-  'callaway driver right hand',
-  'titleist driver right hand',
-  'cobra driver right hand',
-  'srixon driver right hand',
-  'taylormade irons right hand',
-  'ping irons right hand',
-  'callaway irons right hand',
-  'titleist irons right hand',
-  'mizuno irons right hand',
-  'cleveland irons right hand',
-  'srixon irons right hand',
-  'scotty cameron putter',
-  'odyssey putter',
-  'ping putter',
-  'taylormade putter',
-  'titleist putter',
-  'ventus shaft',
-  'fujikura shaft',
-  'graphite design shaft',
-  'project x shaft',
-  'aldila shaft',
-  'oban shaft',
-  'taylormade fairway wood right hand',
-  'ping fairway wood right hand',
-  'callaway fairway wood right hand',
-  'golf waterproof jacket mens',
-  'golf jacket titleist',
-  'golf jacket ping',
-  'golf quarter zip mens',
-  'footjoy golf jacket',
-  'under armour golf jacket',
-  'golf driver',
-  'golf irons',
-  'golf putter',
-  'golf shaft',
-  'golf jacket',
-  'golf clubs',
-  'golf set',
-  'golf',
+  'taylormade driver right hand','ping driver right hand','callaway driver right hand',
+  'titleist driver right hand','cobra driver right hand','srixon driver right hand',
+  'taylormade irons right hand','ping irons right hand','callaway irons right hand',
+  'titleist irons right hand','mizuno irons right hand','cleveland irons right hand',
+  'srixon irons right hand','scotty cameron putter','odyssey putter','ping putter',
+  'taylormade putter','titleist putter','ventus shaft','fujikura shaft',
+  'graphite design shaft','project x shaft','aldila shaft','oban shaft',
+  'taylormade fairway wood right hand','ping fairway wood right hand','callaway fairway wood right hand',
+  'golf waterproof jacket mens','golf jacket titleist','golf jacket ping',
+  'golf quarter zip mens','footjoy golf jacket','under armour golf jacket',
+  'golf driver','golf irons','golf putter','golf shaft','golf jacket',
+  'golf clubs','golf set','golf',
 ];
 
 const EXCLUDE_KEYWORDS = [
@@ -80,40 +51,29 @@ const EXCLUDE_KEYWORDS = [
   'gearbox','exhaust','bumper','bonnet','wing mirror','alloy wheel',
   'tyre','brake pad','engine','radiator','headlight','tailgate',
   'door panel','windscreen','alternator','cambelt','catalytic',
-  'vw golf','volkswagen golf',
-  'xbox','playstation','ps4','ps5','nintendo','wii sports golf',
+  'vw golf','volkswagen golf','xbox','playstation','ps4','ps5','nintendo','wii sports golf',
 ];
 
-const LEFT_HAND_KEYWORDS = [
-  'left hand','left-hand','left handed','left-handed',
-  'lh)','(lh','for lefty','lefty',
-];
+const LEFT_HAND_KEYWORDS = ['left hand','left-hand','left handed','left-handed','lh)','(lh','for lefty','lefty'];
 
-function isExcluded(title) {
-  const t = title.toLowerCase();
-  return EXCLUDE_KEYWORDS.some(kw => t.includes(kw));
-}
-
-function isLeftHanded(title) {
-  const t = title.toLowerCase();
-  const isClub = t.includes('driver') || t.includes('iron') || t.includes('putter') ||
-                 t.includes('wood') || t.includes('hybrid') || t.includes('utility');
+function isExcluded(t) { const x = t.toLowerCase(); return EXCLUDE_KEYWORDS.some(k => x.includes(k)); }
+function isLeftHanded(t) {
+  const x = t.toLowerCase();
+  const isClub = x.includes('driver') || x.includes('iron') || x.includes('putter') || x.includes('wood') || x.includes('hybrid');
   if (!isClub) return false;
-  return LEFT_HAND_KEYWORDS.some(kw => t.includes(kw));
+  return LEFT_HAND_KEYWORDS.some(k => x.includes(k));
 }
 
 function detectFlag(title) {
   const checks = [
-    ['calloway','Callaway'],['titlest','Titleist'],['drver','driver'],
-    ['puter','putter'],['stif ','stiff'],['irns','irons'],
-    ['scotty camron','Scotty Cameron'],['taylormade','TaylorMade'],
-    ['calaway','Callaway'],['fujikara','Fujikura'],
-    ['ventus blu','Ventus Blue'],['ping g 430','Ping G430'],
+    ['calloway','Callaway'],['titlest','Titleist'],['drver','driver'],['puter','putter'],
+    ['stif ','stiff'],['irns','irons'],['scotty camron','Scotty Cameron'],['calaway','Callaway'],
+    ['fujikara','Fujikura'],['ventus blu','Ventus Blue'],['ping g 430','Ping G430'],
     ['cleavland','Cleveland'],['mizzuno','Mizuno'],
   ];
   const l = title.toLowerCase();
-  for (const [w, c] of checks) if (l.includes(w)) return `Misspelling: "${w}" → "${c}" — may be undervalued`;
-  if (title === title.toLowerCase() && title.length > 10) return 'All lowercase title — poor SEO, may be undervalued';
+  for (const [w, c] of checks) if (l.includes(w)) return `Misspelling: "${w}" → "${c}"`;
+  if (title === title.toLowerCase() && title.length > 10) return 'All lowercase title — poor SEO';
   return null;
 }
 
@@ -130,27 +90,99 @@ function getCategory(title) {
   return 'Golf';
 }
 
+// Build a "model key" from title — used to group similar items for price comparison
+// E.g. "TaylorMade Qi10 Driver 10.5° Stiff" → "taylormade qi10 driver"
+function getModelKey(title) {
+  const t = title.toLowerCase();
+  // Common golf model patterns
+  const models = [
+    /\btaylormade\s+\w+\s+(driver|iron|putter|wood)/,
+    /\bscotty cameron\s+\w+\s*\w*/,
+    /\bping\s+g\d+\s*\w*/,
+    /\bping\s+\w+\s+(driver|iron|putter)/,
+    /\bcallaway\s+\w+\s*(driver|iron|putter|wood)?/,
+    /\btitleist\s+\w+\s*\w*/,
+    /\bmizuno\s+\w+\s*\w*/,
+    /\bventus\s+(blue|red|black|tr)/,
+    /\bfujikura\s+\w+/,
+    /\bgraphite design\s+\w+\s*\w*/,
+    /\bodyssey\s+\w+\s*\w*/,
+  ];
+  for (const re of models) {
+    const m = t.match(re);
+    if (m) return m[0].replace(/\s+/g, ' ').trim();
+  }
+  // Fallback: first 3 words
+  return t.split(/\s+/).slice(0, 3).join(' ');
+}
+
 function getSoldUrl(title) {
-  const cleanTitle = title.split(' ').slice(0, 6).join(' ');
-  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(cleanTitle)}&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=20&_sop=13`;
+  const c = title.split(' ').slice(0, 6).join(' ');
+  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(c)}&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=20&_sop=13`;
+}
+
+// Calculate deal score 0-100 based on multiple signals
+function calculateDealScore(item, modelStats) {
+  let score = 0;
+  const reasons = [];
+
+  // 1. Below market price — biggest factor (up to 40 pts)
+  if (modelStats && modelStats.count >= 3) {
+    const pctBelow = ((modelStats.avg - item.price) / modelStats.avg) * 100;
+    if (pctBelow >= 40) { score += 40; reasons.push(`${Math.round(pctBelow)}% below market avg (£${modelStats.avg})`); }
+    else if (pctBelow >= 25) { score += 30; reasons.push(`${Math.round(pctBelow)}% below market avg (£${modelStats.avg})`); }
+    else if (pctBelow >= 15) { score += 20; reasons.push(`${Math.round(pctBelow)}% below market avg (£${modelStats.avg})`); }
+    else if (pctBelow >= 5) { score += 10; reasons.push(`Slightly below average`); }
+  }
+
+  // 2. Poor title — likely undervalued (up to 20 pts)
+  if (item.ai_flag) {
+    score += 20;
+    reasons.push(item.ai_flag);
+  }
+
+  // 3. Premium brand at low price (up to 15 pts)
+  const premiumBrands = ['scotty cameron','taylormade','titleist','ping','graphite design'];
+  const titleLower = item.title.toLowerCase();
+  const isPremium = premiumBrands.some(b => titleLower.includes(b));
+  if (isPremium && item.price < 100) { score += 15; reasons.push('Premium brand under £100'); }
+  else if (isPremium && item.price < 200) { score += 8; reasons.push('Premium brand under £200'); }
+
+  // 4. New / inexperienced seller (up to 15 pts)
+  const fb = item.seller_feedback_count || 0;
+  if (fb > 0 && fb < 20) { score += 15; reasons.push(`New seller (${fb} feedback)`); }
+  else if (fb >= 20 && fb < 100) { score += 8; reasons.push(`Newer seller (${fb} feedback)`); }
+
+  // 5. Free shipping bonus (5 pts)
+  if (item.free_shipping) { score += 5; reasons.push('Free shipping'); }
+
+  // 6. Bundle / set detection (10 pts)
+  const bundleWords = ['set','bundle','lot of','x4','x5','x6','5-pw','4-pw','3-pw','irons set'];
+  if (bundleWords.some(w => titleLower.includes(w))) { score += 10; reasons.push('Bundle/set listing'); }
+
+  return { score: Math.min(score, 100), reasons };
+}
+
+function getDealRating(score) {
+  if (score >= 75) return { label: 'HOT DEAL', color: '#ef4444' };
+  if (score >= 55) return { label: 'GREAT DEAL', color: '#00ff88' };
+  if (score >= 35) return { label: 'WORTH CHECK', color: '#3b82f6' };
+  if (score >= 20) return { label: 'AVERAGE', color: '#f59e0b' };
+  return { label: 'PASS', color: '#64748b' };
 }
 
 app.get('/api/listings', async (req, res) => {
   try {
     const token = await getAccessToken();
-    const items = [];
+    const rawItems = [];
     const seen = new Set();
 
+    // Pass 1 — fetch all listings
     for (const q of SEARCHES) {
       try {
         const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&limit=20&filter=buyingOptions:{FIXED_PRICE},itemLocationCountry:GB,conditions:{USED|VERY_GOOD|GOOD|LIKE_NEW|NEW}&sort=newlyListed`;
-
         const r = await fetch(url, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
-            'Accept-Language': 'en-GB',
-          }
+          headers: { 'Authorization': `Bearer ${token}`, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB', 'Accept-Language': 'en-GB' }
         });
         const data = await r.json();
         const list = data.itemSummaries || [];
@@ -158,26 +190,22 @@ app.get('/api/listings', async (req, res) => {
         for (const it of list) {
           if (seen.has(it.itemId)) continue;
           seen.add(it.itemId);
-
           const price = parseFloat(it.price?.value || 0);
           if (price < 20) continue;
           if (it.price?.currency !== 'GBP') continue;
           if (isExcluded(it.title)) continue;
           if (isLeftHanded(it.title)) continue;
-
-          const itemLocation = it.itemLocation?.country || '';
-          if (itemLocation && itemLocation !== 'GB') continue;
+          const loc = it.itemLocation?.country || '';
+          if (loc && loc !== 'GB') continue;
 
           const freeShip = it.shippingOptions?.[0]?.shippingCost?.value === '0.00';
-
-          items.push({
+          rawItems.push({
             id: it.itemId,
             title: it.title,
             sold_url: getSoldUrl(it.title),
             listed_at: it.itemCreationDate || null,
             price: Math.round(price),
             free_shipping: freeShip,
-            shipping_cost: freeShip ? 0 : parseFloat(it.shippingOptions?.[0]?.shippingCost?.value || 7),
             ai_flag: detectFlag(it.title),
             marketplace: 'eBay',
             url: it.itemWebUrl,
@@ -186,22 +214,58 @@ app.get('/api/listings', async (req, res) => {
             seller_rating: it.seller?.feedbackPercentage || null,
             seller_feedback_count: it.seller?.feedbackScore || null,
             category: getCategory(it.title),
-            hot: !!detectFlag(it.title),
+            model_key: getModelKey(it.title),
           });
         }
-      } catch(err) {
-        console.error(`Search error "${q}":`, err.message);
+      } catch (err) {
+        console.error(`Search "${q}":`, err.message);
       }
     }
 
-    items.sort((a, b) => {
-      const at = a.listed_at ? new Date(a.listed_at).getTime() : 0;
-      const bt = b.listed_at ? new Date(b.listed_at).getTime() : 0;
-      return bt - at;
+    // Pass 2 — calculate average price per model from active listings
+    const modelGroups = {};
+    for (const item of rawItems) {
+      if (!modelGroups[item.model_key]) modelGroups[item.model_key] = [];
+      modelGroups[item.model_key].push(item.price);
+    }
+    const modelStats = {};
+    for (const [key, prices] of Object.entries(modelGroups)) {
+      if (prices.length < 3) continue;
+      prices.sort((a, b) => a - b);
+      // Remove top and bottom 10% to filter outliers
+      const trimmed = prices.slice(Math.floor(prices.length * 0.1), Math.ceil(prices.length * 0.9));
+      const avg = Math.round(trimmed.reduce((s, p) => s + p, 0) / trimmed.length);
+      modelStats[key] = {
+        avg,
+        median: prices[Math.floor(prices.length / 2)],
+        min: prices[0],
+        max: prices[prices.length - 1],
+        count: prices.length,
+      };
+    }
+
+    // Pass 3 — score each listing
+    const items = rawItems.map(item => {
+      const stats = modelStats[item.model_key];
+      const { score, reasons } = calculateDealScore(item, stats);
+      const rating = getDealRating(score);
+      return {
+        ...item,
+        deal_score: score,
+        deal_label: rating.label,
+        deal_color: rating.color,
+        deal_reasons: reasons,
+        market_avg: stats ? stats.avg : null,
+        market_count: stats ? stats.count : 0,
+        pct_below: stats ? Math.round(((stats.avg - item.price) / stats.avg) * 100) : null,
+      };
     });
 
-    console.log(`Total listings: ${items.length}`);
-    res.json({ success: true, listings: items.slice(0, 100) });
+    // Sort by deal score (highest first)
+    items.sort((a, b) => b.deal_score - a.deal_score);
+
+    console.log(`Total: ${items.length}, Hot deals: ${items.filter(i => i.deal_score >= 75).length}`);
+    res.json({ success: true, listings: items.slice(0, 120) });
 
   } catch (err) {
     console.error(err);
