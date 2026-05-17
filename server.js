@@ -10,6 +10,8 @@ const CLIENT_ID = process.env.EBAY_CLIENT_ID;
 const CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET;
 
 let tokenCache = { token: null, expires: 0 };
+const soldCache = new Map();
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 
 async function getAccessToken() {
   if (tokenCache.token && Date.now() < tokenCache.expires) return tokenCache.token;
@@ -72,11 +74,6 @@ const LEFT_HAND_KEYWORDS = [
   ' lhf ',' lh ',' lhg ','lhc','for lefty','lefty',
 ];
 
-const EXCLUDE_LOCATION_KEYWORDS = [
-  'ships from usa','ships from us','ships from japan','ships from korea',
-  'ships from australia','international shipping only',
-];
-
 function isLeftHanded(title) {
   const t = title.toLowerCase();
   const isClub = t.includes('driver') || t.includes('iron') || t.includes('putter') ||
@@ -85,22 +82,111 @@ function isLeftHanded(title) {
   return LEFT_HAND_KEYWORDS.some(kw => t.includes(kw));
 }
 
-function isExcludedLocation(title) {
-  const t = title.toLowerCase();
-  return EXCLUDE_LOCATION_KEYWORDS.some(kw => t.includes(kw));
+// Extract key search terms from a title for sold price lookup
+function extractSearchTerms(title) {
+  // Take first 5 meaningful words, skip common filler words
+  const stopWords = ['the','and','for','with','in','a','an','of','to','used','good','very','like','new'];
+  const words = title.split(' ')
+    .filter(w => w.length > 1 && !stopWords.includes(w.toLowerCase()))
+    .slice(0, 5)
+    .join(' ');
+  return words;
 }
 
-const RESALE = {
-  'taylormade':1.9,'scotty cameron':1.85,'titleist':1.7,'ping':1.7,'callaway':1.6,
-  'mizuno':1.65,'ventus':1.8,'fujikura':1.75,'graphite design':1.9,'odyssey':1.5,
-  'cleveland':1.5,'srixon':1.45,'cobra':1.55,'project x':1.7,'aldila':1.6,
-  'oban':1.65,'accra':1.6,'footjoy':1.5,'under armour':1.4,
+// Fallback multipliers only used if sold data unavailable
+const FALLBACK_RESALE = {
+  'taylormade':1.85,'scotty cameron':1.8,'titleist':1.65,'ping':1.65,'callaway':1.55,
+  'mizuno':1.6,'ventus':1.75,'fujikura':1.7,'graphite design':1.85,'odyssey':1.45,
+  'cleveland':1.45,'srixon':1.4,'cobra':1.5,'project x':1.65,'aldila':1.55,
+  'oban':1.6,'accra':1.55,'footjoy':1.45,'under armour':1.35,
 };
 
-function estimateResale(title, price) {
+function fallbackEstimate(title, price) {
   const t = title.toLowerCase();
-  for (const [b, m] of Object.entries(RESALE)) if (t.includes(b)) return Math.round(price * m);
+  for (const [b, m] of Object.entries(FALLBACK_RESALE)) if (t.includes(b)) return Math.round(price * m);
   return Math.round(price * 1.5);
+}
+
+// Get real sold prices from eBay Browse API
+async function getSoldMedian(token, title, condition) {
+  const searchTerms = extractSearchTerms(title);
+  const cacheKey = `${searchTerms}|${condition}`;
+
+  // Check cache first
+  const cached = soldCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.median;
+  }
+
+  try {
+    // Map condition to eBay condition filter
+    const condFilter = mapConditionToFilter(condition);
+
+    // Search sold/completed items via Browse API
+    const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(searchTerms)}&limit=20&filter=buyingOptions:{FIXED_PRICE},itemLocationCountry:GB,soldItems:true${condFilter}&sort=endingSoonest`;
+
+    const r = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
+      }
+    });
+
+    const data = await r.json();
+    const items = data.itemSummaries || [];
+
+    if (items.length < 2) {
+      // Not enough sold data — try without condition filter
+      const url2 = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(searchTerms)}&limit=20&filter=buyingOptions:{FIXED_PRICE},itemLocationCountry:GB,soldItems:true&sort=endingSoonest`;
+      const r2 = await fetch(url2, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
+        }
+      });
+      const data2 = await r2.json();
+      const items2 = data2.itemSummaries || [];
+
+      if (items2.length < 2) {
+        soldCache.set(cacheKey, { median: null, timestamp: Date.now() });
+        return null;
+      }
+
+      const prices2 = items2
+        .map(i => parseFloat(i.price?.value || 0))
+        .filter(p => p > 5 && p < 5000)
+        .sort((a, b) => a - b);
+
+      const median2 = prices2[Math.floor(prices2.length / 2)];
+      soldCache.set(cacheKey, { median: Math.round(median2), timestamp: Date.now() });
+      console.log(`Sold (any condition) "${searchTerms}": ${prices2.length} items, median £${Math.round(median2)}`);
+      return Math.round(median2);
+    }
+
+    const prices = items
+      .map(i => parseFloat(i.price?.value || 0))
+      .filter(p => p > 5 && p < 5000)
+      .sort((a, b) => a - b);
+
+    const median = prices[Math.floor(prices.length / 2)];
+    soldCache.set(cacheKey, { median: Math.round(median), timestamp: Date.now() });
+    console.log(`Sold (${condition}) "${searchTerms}": ${prices.length} items, median £${Math.round(median)}`);
+    return Math.round(median);
+
+  } catch (err) {
+    console.error(`Sold price error for "${searchTerms}":`, err.message);
+    return null;
+  }
+}
+
+function mapConditionToFilter(condition) {
+  const c = (condition || '').toLowerCase();
+  if (c.includes('new')) return ',conditions:{NEW}';
+  if (c.includes('like new') || c.includes('excellent')) return ',conditions:{LIKE_NEW}';
+  if (c.includes('very good')) return ',conditions:{VERY_GOOD}';
+  if (c.includes('good')) return ',conditions:{GOOD}';
+  if (c.includes('acceptable')) return ',conditions:{ACCEPTABLE}';
+  return ',conditions:{USED}';
 }
 
 function detectFlag(title) {
@@ -138,9 +224,8 @@ function getCategory(title) {
 }
 
 function getSoldUrl(title) {
-  // Take first 5 words of title for a clean search
   const cleanTitle = title.split(' ').slice(0, 5).join(' ');
-  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(cleanTitle)}&LH_Sold=1&LH_Complete=1&LH_ItemCondition=3000&_ipg=20&_sop=13`;
+  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(cleanTitle)}&LH_Sold=1&LH_Complete=1&_ipg=20&_sop=13`;
 }
 
 app.get('/api/listings', async (req, res) => {
@@ -170,16 +255,26 @@ app.get('/api/listings', async (req, res) => {
           const price = parseFloat(it.price?.value || 0);
           if (price < 10 || price > 1200) continue;
           if (it.price?.currency !== 'GBP') continue;
-
           if (isLeftHanded(it.title)) continue;
-          if (isExcludedLocation(it.title)) continue;
 
           const itemLocation = it.itemLocation?.country || '';
           if (itemLocation && itemLocation !== 'GB') continue;
 
-          const resale = estimateResale(it.title, price);
+          const condition = it.condition || 'Used';
+
+          // Get real sold price from eBay
+          let resale = await getSoldMedian(token, it.title, condition);
+          let resaleSource = 'sold_data';
+
+          // Fall back to multiplier if no sold data
+          if (!resale || resale < price) {
+            resale = fallbackEstimate(it.title, price);
+            resaleSource = 'estimated';
+          }
+
           const fees = Math.round(resale * 0.1);
-          const shipping = it.shippingOptions?.[0]?.shippingCost?.value === '0.00' ? 0 : 7;
+          const freeShip = it.shippingOptions?.[0]?.shippingCost?.value === '0.00';
+          const shipping = freeShip ? 0 : 7;
           const profit = resale - price - fees - shipping;
           const roi = Math.round((profit / price) * 100);
           if (roi < 15) continue;
@@ -190,7 +285,11 @@ app.get('/api/listings', async (req, res) => {
             sold_url: getSoldUrl(it.title),
             listed_at: it.itemCreationDate || null,
             price: Math.round(price),
-            resale, fees, shipping,
+            resale,
+            resale_source: resaleSource,
+            fees,
+            shipping,
+            free_shipping: freeShip,
             profit: Math.round(profit),
             roi,
             badge: getBadge(roi),
@@ -199,19 +298,18 @@ app.get('/api/listings', async (req, res) => {
             marketplace: 'eBay',
             url: it.itemWebUrl,
             image_url: it.image?.imageUrl || it.thumbnailImages?.[0]?.imageUrl || null,
-            condition: it.condition || 'Used',
+            condition,
             seller_rating: it.seller?.feedbackPercentage || null,
             category: getCategory(it.title),
-            free_shipping: it.shippingOptions?.[0]?.shippingCost?.value === '0.00',
           });
         }
       } catch(err) {
-        console.error(`Search error for "${q}":`, err.message);
+        console.error(`Search error "${q}":`, err.message);
       }
     }
 
     items.sort((a, b) => b.roi - a.roi);
-    console.log(`Total listings: ${items.length}`);
+    console.log(`Total: ${items.length}, Cache size: ${soldCache.size}`);
     res.json({ success: true, listings: items.slice(0, 80) });
 
   } catch (err) {
