@@ -27,14 +27,12 @@ async function getAccessToken() {
 }
 
 const SEARCHES = [
-  // Drivers
   'taylormade driver right hand',
   'ping driver right hand',
   'callaway driver right hand',
   'titleist driver right hand',
   'cobra driver right hand',
   'srixon driver right hand',
-  // Irons
   'taylormade irons right hand',
   'ping irons right hand',
   'callaway irons right hand',
@@ -42,31 +40,26 @@ const SEARCHES = [
   'mizuno irons right hand',
   'cleveland irons right hand',
   'srixon irons right hand',
-  // Putters
   'scotty cameron putter',
   'odyssey putter',
   'ping putter',
   'taylormade putter',
   'titleist putter',
-  // Shafts
   'ventus shaft',
   'fujikura shaft',
   'graphite design shaft',
   'project x shaft',
   'aldila shaft',
   'oban shaft',
-  // Fairway & Hybrids
   'taylormade fairway wood right hand',
   'ping fairway wood right hand',
   'callaway fairway wood right hand',
-  // Clothing
   'golf waterproof jacket mens',
   'golf jacket titleist',
   'golf jacket ping',
   'golf quarter zip mens',
   'footjoy golf jacket',
   'under armour golf jacket',
-  // Broad
   'golf driver',
   'golf irons',
   'golf putter',
@@ -77,10 +70,33 @@ const SEARCHES = [
   'golf',
 ];
 
+const EXCLUDE_KEYWORDS = [
+  // VW Golf car specific
+  'golf mk','golf gti','golf r ','golf tdi','golf tsi','golf 1.','golf 2.',
+  'golf 1999','golf 2000','golf 2001','golf 2002','golf 2003','golf 2004',
+  'golf 2005','golf 2006','golf 2007','golf 2008','golf 2009','golf 2010',
+  'golf 2011','golf 2012','golf 2013','golf 2014','golf 2015','golf 2016',
+  'golf 2017','golf 2018','golf 2019','golf 2020','golf 2021','golf 2022',
+  'mk4','mk5','mk6','mk7','mk8',
+  // Car parts
+  'gearbox','exhaust','bumper','bonnet','wing mirror','alloy wheel',
+  'tyre','brake pad','engine','radiator','headlight','tailgate',
+  'door panel','windscreen','alternator','cambelt','catalytic',
+  // Other vehicles
+  'vw golf','volkswagen golf',
+  // Gaming
+  'xbox','playstation','ps4','ps5','nintendo','wii sports golf',
+];
+
 const LEFT_HAND_KEYWORDS = [
   'left hand','left-hand','left handed','left-handed',
   'lh)','(lh','for lefty','lefty',
 ];
+
+function isExcluded(title) {
+  const t = title.toLowerCase();
+  return EXCLUDE_KEYWORDS.some(kw => t.includes(kw));
+}
 
 function isLeftHanded(title) {
   const t = title.toLowerCase();
@@ -144,58 +160,4 @@ app.get('/api/listings', async (req, res) => {
         const list = data.itemSummaries || [];
 
         for (const it of list) {
-          if (seen.has(it.itemId)) continue;
-          seen.add(it.itemId);
-
-          const price = parseFloat(it.price?.value || 0);
-          if (price < 20) continue;
-          if (it.price?.currency !== 'GBP') continue;
-          if (isLeftHanded(it.title)) continue;
-
-          const itemLocation = it.itemLocation?.country || '';
-          if (itemLocation && itemLocation !== 'GB') continue;
-
-          const freeShip = it.shippingOptions?.[0]?.shippingCost?.value === '0.00';
-
-          items.push({
-            id: it.itemId,
-            title: it.title,
-            sold_url: getSoldUrl(it.title),
-            listed_at: it.itemCreationDate || null,
-            price: Math.round(price),
-            free_shipping: freeShip,
-            shipping_cost: freeShip ? 0 : parseFloat(it.shippingOptions?.[0]?.shippingCost?.value || 7),
-            ai_flag: detectFlag(it.title),
-            marketplace: 'eBay',
-            url: it.itemWebUrl,
-            image_url: it.image?.imageUrl || it.thumbnailImages?.[0]?.imageUrl || null,
-            condition: it.condition || 'Used',
-            seller_rating: it.seller?.feedbackPercentage || null,
-            seller_feedback_count: it.seller?.feedbackScore || null,
-            category: getCategory(it.title),
-            hot: !!detectFlag(it.title),
-          });
-        }
-      } catch(err) {
-        console.error(`Search error "${q}":`, err.message);
-      }
-    }
-
-    items.sort((a, b) => {
-      const at = a.listed_at ? new Date(a.listed_at).getTime() : 0;
-      const bt = b.listed_at ? new Date(b.listed_at).getTime() : 0;
-      return bt - at;
-    });
-
-    console.log(`Total listings: ${items.length}`);
-    res.json({ success: true, listings: items.slice(0, 100) });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Running on ${PORT}`));
+          if
