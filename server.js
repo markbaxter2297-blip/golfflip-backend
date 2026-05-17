@@ -26,19 +26,78 @@ async function getAccessToken() {
   return tokenCache.token;
 }
 
-const EBAY_SEARCHES = [
-  'taylormade driver','scotty cameron putter','titleist irons','ping driver','callaway irons',
-  'mizuno irons','ventus shaft','fujikura shaft','golf waterproof jacket','golf quarter zip',
+const CLUB_SEARCHES = [
+  'taylormade driver right hand',
+  'taylormade irons right hand',
+  'scotty cameron putter',
+  'ping driver right hand',
+  'ping irons right hand',
+  'callaway driver right hand',
+  'callaway irons right hand',
+  'titleist irons right hand',
+  'titleist driver right hand',
+  'mizuno irons right hand',
+  'cleveland irons right hand',
+  'srixon irons right hand',
+  'cobra driver right hand',
+  'odyssey putter',
+  'ping putter',
+  'taylormade putter',
 ];
 
-const VINTED_SEARCHES = [
-  'taylormade golf','scotty cameron','titleist golf','ping golf','callaway golf',
-  'mizuno golf','golf jacket','golf waterproof','golf polo shirt',
+const SHAFT_SEARCHES = [
+  'ventus shaft',
+  'fujikura shaft',
+  'graphite design tour ad shaft',
+  'project x shaft',
+  'aldila shaft',
+  'oban shaft',
+  'accra shaft',
 ];
+
+const CLOTHING_SEARCHES = [
+  'golf waterproof jacket mens',
+  'golf jacket titleist mens',
+  'golf jacket ping mens',
+  'golf quarter zip mens',
+  'golf pullover mens',
+  'under armour golf jacket',
+  'footjoy golf jacket',
+];
+
+const ALL_SEARCHES = [...CLUB_SEARCHES, ...SHAFT_SEARCHES, ...CLOTHING_SEARCHES];
+
+// Keywords that indicate left handed — filter these OUT for clubs
+const LEFT_HAND_KEYWORDS = [
+  'left hand','left-hand','lh ','lh)','(lh','left handed','left-handed',
+  ' lhf ',' lh ',' lhg ','lhc','for lefty','lefty','left hand only',
+];
+
+// Keywords that indicate non-UK location
+const EXCLUDE_LOCATION_KEYWORDS = [
+  'ships from usa','ships from us','ships from japan','ships from korea',
+  'ships from australia','international shipping only',
+];
+
+function isLeftHanded(title) {
+  const t = title.toLowerCase();
+  // Only apply left hand filter to clubs, not shafts or clothing
+  const isClub = t.includes('driver') || t.includes('iron') || t.includes('putter') || 
+                 t.includes('wood') || t.includes('hybrid') || t.includes('utility');
+  if (!isClub) return false;
+  return LEFT_HAND_KEYWORDS.some(kw => t.includes(kw));
+}
+
+function isExcludedLocation(title) {
+  const t = title.toLowerCase();
+  return EXCLUDE_LOCATION_KEYWORDS.some(kw => t.includes(kw));
+}
 
 const RESALE = {
   'taylormade':1.9,'scotty cameron':1.85,'titleist':1.7,'ping':1.7,'callaway':1.6,
   'mizuno':1.65,'ventus':1.8,'fujikura':1.75,'graphite design':1.9,'odyssey':1.5,
+  'cleveland':1.5,'srixon':1.45,'cobra':1.55,'project x':1.7,'aldila':1.6,
+  'oban':1.65,'accra':1.6,'footjoy':1.5,'under armour':1.4,
 };
 
 function estimateResale(title, price) {
@@ -48,8 +107,13 @@ function estimateResale(title, price) {
 }
 
 function detectFlag(title) {
-  const checks = [['calloway','Callaway'],['titlest','Titleist'],['drver','driver'],
-    ['puter','putter'],['stif ','stiff'],['irns','irons'],['scotty camron','Scotty Cameron']];
+  const checks = [
+    ['calloway','Callaway'],['titlest','Titleist'],['drver','driver'],
+    ['puter','putter'],['stif ','stiff'],['irns','irons'],
+    ['scotty camron','Scotty Cameron'],['taylormade','TaylorMade'],
+    ['ping g 430','Ping G430'],['calaway','Callaway'],
+    ['fujikara','Fujikura'],['ventus blu','Ventus Blue'],
+  ];
   const l = title.toLowerCase();
   for (const [w, c] of checks) if (l.includes(w)) return `Misspelling: "${w}" → "${c}" — likely undervalued`;
   if (title === title.toLowerCase() && title.length > 10) return 'All lowercase — poor SEO, may be undervalued';
@@ -70,148 +134,88 @@ function getCategory(title) {
   if (t.includes('putter') || t.includes('puter')) return 'Putters';
   if (t.includes('shaft')) return 'Premium Shafts';
   if (t.includes('jacket') || t.includes('waterproof')) return 'Golf Jackets';
-  if (t.includes('zip') || t.includes('fleece') || t.includes('polo')) return 'Quarter Zips';
+  if (t.includes('zip') || t.includes('fleece') || t.includes('pullover')) return 'Quarter Zips';
   if (t.includes('utility') || t.includes('hybrid')) return 'Utility Irons';
+  if (t.includes('wood') || t.includes('fairway')) return 'Fairway Woods';
   return 'Other';
-}
-
-async function fetchEbayListings(token) {
-  const items = [];
-  const seen = new Set();
-
-  for (const q of EBAY_SEARCHES) {
-    try {
-      const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&limit=20&filter=buyingOptions:{FIXED_PRICE}&sort=newlyListed`;
-      const r = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB' }
-      });
-      const data = await r.json();
-      const list = data.itemSummaries || [];
-
-      for (const it of list) {
-        if (seen.has(it.itemId)) continue;
-        seen.add(it.itemId);
-        const price = parseFloat(it.price?.value || 0);
-        if (price < 10 || price > 1200) continue;
-        if (it.price?.currency !== 'GBP') continue;
-
-        const resale = estimateResale(it.title, price);
-        const fees = Math.round(resale * 0.1);
-        const shipping = 7;
-        const profit = resale - price - fees - shipping;
-        const roi = Math.round((profit / price) * 100);
-        if (roi < 15) continue;
-
-        items.push({
-          id: `ebay_${it.itemId}`,
-          title: it.title,
-          listed_at: it.itemCreationDate || null,
-          price: Math.round(price),
-          resale, fees, shipping,
-          profit: Math.round(profit),
-          roi,
-          badge: getBadge(roi),
-          hot: roi >= 40,
-          ai_flag: detectFlag(it.title),
-          marketplace: 'eBay',
-          url: it.itemWebUrl,
-          image_url: it.image?.imageUrl || it.thumbnailImages?.[0]?.imageUrl || null,
-          condition: it.condition || 'Used',
-          seller_rating: it.seller?.feedbackPercentage || null,
-          category: getCategory(it.title),
-        });
-      }
-    } catch(err) {
-      console.error('eBay search error:', err.message);
-    }
-  }
-  return items;
-}
-
-async function fetchVintedListings() {
-  const items = [];
-  const seen = new Set();
-
-  for (const q of VINTED_SEARCHES) {
-    try {
-      // Vinted's internal API endpoint
-      const url = `https://www.vinted.co.uk/api/v2/catalog/items?search_text=${encodeURIComponent(q)}&order=newest_first&per_page=20`;
-      const r = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-          'Accept': 'application/json',
-          'Accept-Language': 'en-GB,en;q=0.9',
-          'Referer': 'https://www.vinted.co.uk/',
-          'Origin': 'https://www.vinted.co.uk',
-        }
-      });
-
-      if (!r.ok) {
-        console.log(`Vinted blocked for "${q}": ${r.status}`);
-        continue;
-      }
-
-      const data = await r.json();
-      const list = data.items || [];
-      console.log(`Vinted "${q}": ${list.length} items`);
-
-      for (const it of list) {
-        if (seen.has(it.id)) continue;
-        seen.add(it.id);
-
-        const price = parseFloat(it.price || 0);
-        if (price < 3 || price > 800) continue;
-
-        const resale = estimateResale(it.title, price);
-        const fees = Math.round(resale * 0.1);
-        const shipping = 5;
-        const profit = resale - price - fees - shipping;
-        const roi = Math.round((profit / price) * 100);
-        if (roi < 15) continue;
-
-        items.push({
-          id: `vinted_${it.id}`,
-          title: it.title,
-          listed_at: it.created_at_ts ? new Date(it.created_at_ts * 1000).toISOString() : null,
-          price: Math.round(price),
-          resale, fees, shipping,
-          profit: Math.round(profit),
-          roi,
-          badge: getBadge(roi),
-          hot: roi >= 40,
-          ai_flag: detectFlag(it.title),
-          marketplace: 'Vinted',
-          url: `https://www.vinted.co.uk/items/${it.id}`,
-          image_url: it.photo?.url || it.photos?.[0]?.url || null,
-          condition: it.status || 'Used',
-          seller_rating: it.user?.feedback_reputation || null,
-          category: getCategory(it.title),
-        });
-      }
-    } catch(err) {
-      console.error('Vinted search error:', err.message);
-    }
-  }
-  return items;
 }
 
 app.get('/api/listings', async (req, res) => {
   try {
     const token = await getAccessToken();
-    const [ebayItems, vintedItems] = await Promise.all([
-      fetchEbayListings(token),
-      fetchVintedListings(),
-    ]);
+    const items = [];
+    const seen = new Set();
 
-    const all = [...ebayItems, ...vintedItems];
-    all.sort((a, b) => b.roi - a.roi);
+    for (const q of ALL_SEARCHES) {
+      try {
+        // itemLocationCountry=GB ensures UK listings only
+        // We also add conditions filter to exclude new defective/parts
+        const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&limit=20&filter=buyingOptions:{FIXED_PRICE},itemLocationCountry:GB,conditions:{USED|VERY_GOOD|GOOD|LIKE_NEW|NEW}&sort=newlyListed`;
+        
+        const r = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
+            'Accept-Language': 'en-GB',
+          }
+        });
+        const data = await r.json();
+        const list = data.itemSummaries || [];
 
-    console.log(`eBay: ${ebayItems.length}, Vinted: ${vintedItems.length}`);
-    res.json({ 
-      success: true, 
-      listings: all.slice(0, 80),
-      sources: { ebay: ebayItems.length, vinted: vintedItems.length }
-    });
+        for (const it of list) {
+          if (seen.has(it.itemId)) continue;
+          seen.add(it.itemId);
+
+          const price = parseFloat(it.price?.value || 0);
+          if (price < 10 || price > 1200) continue;
+          if (it.price?.currency !== 'GBP') continue;
+
+          // Skip left handed clubs
+          if (isLeftHanded(it.title)) continue;
+
+          // Skip non-UK titles
+          if (isExcludedLocation(it.title)) continue;
+
+          // Double check location from API data
+          const itemLocation = it.itemLocation?.country || '';
+          if (itemLocation && itemLocation !== 'GB') continue;
+
+          const resale = estimateResale(it.title, price);
+          const fees = Math.round(resale * 0.1);
+          const shipping = it.shippingOptions?.[0]?.shippingCost?.value === '0.00' ? 0 : 7;
+          const profit = resale - price - fees - shipping;
+          const roi = Math.round((profit / price) * 100);
+          if (roi < 15) continue;
+
+          items.push({
+            id: it.itemId,
+            title: it.title,
+            listed_at: it.itemCreationDate || null,
+            price: Math.round(price),
+            resale, fees, shipping,
+            profit: Math.round(profit),
+            roi,
+            badge: getBadge(roi),
+            hot: roi >= 40,
+            ai_flag: detectFlag(it.title),
+            marketplace: 'eBay',
+            url: it.itemWebUrl,
+            image_url: it.image?.imageUrl || it.thumbnailImages?.[0]?.imageUrl || null,
+            condition: it.condition || 'Used',
+            seller_rating: it.seller?.feedbackPercentage || null,
+            category: getCategory(it.title),
+            free_shipping: it.shippingOptions?.[0]?.shippingCost?.value === '0.00',
+          });
+        }
+      } catch(err) {
+        console.error(`Search error for "${q}":`, err.message);
+      }
+    }
+
+    items.sort((a, b) => b.roi - a.roi);
+    console.log(`Total listings: ${items.length}`);
+    res.json({ success: true, listings: items.slice(0, 80) });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: err.message });
